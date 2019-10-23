@@ -17,6 +17,7 @@ ynh_print_info --message="Loading installation settings..."
 app=$YNH_APP_INSTANCE_NAME
 
 domain=$(ynh_app_setting_get --app=$app --key=domain)
+path_url=$(ynh_app_setting_get --app=$app --key=path)
 port=$(ynh_app_setting_get --app=$app --key=port)
 is_public=$(ynh_app_setting_get --app=$app --key=is_public)
 final_path=$(ynh_app_setting_get --app=$app --key=final_path)
@@ -26,6 +27,11 @@ creative=$(ynh_app_setting_get --app=$app --key=creative)
 damage=$(ynh_app_setting_get --app=$app --key=damage)
 servername=$(ynh_app_setting_get --app=$app --key=servername)
 
+#=================================================
+# CHECK VERSION
+#=================================================
+
+upgrade_type=$(ynh_check_app_version_changed)
 
 #=================================================
 # ENSURE DOWNWARD COMPATIBILITY
@@ -56,6 +62,12 @@ if [ -z $final_path ]; then
 	ynh_app_setting_set --app=$app --key=final_path --value=$final_path
 fi
 
+# If home_path doesn't exist, create it
+if [ -z $home_path ]; then
+	home_path=/home/yunohost.app/$app
+	ynh_app_setting_set --app=$app --key=home_path --value=$home_path
+fi
+
 #=================================================
 # BACKUP BEFORE UPGRADE THEN ACTIVE TRAP
 #=================================================
@@ -73,15 +85,25 @@ ynh_abort_if_errors
 #=================================================
 # STANDARD UPGRADE STEPS
 #=================================================
+# STOP SYSTEMD SERVICE
+#=================================================
+ynh_script_progression --message="Stopping a systemd service..." --time --weight=1
+
+ynh_systemd_action --service_name=$app --action="stop" --log_path="/var/log/$app/$app.log"
+
+#=================================================
 # DOWNLOAD, CHECK AND UNPACK SOURCE
 #=================================================
-ynh_print_info --message="Upgrading source files..."
 
-# Remove old install
-ynh_secure_remove --file="$final_path"
+if [ "$upgrade_type" == "UPGRADE_APP" ]
+then
+	ynh_print_info --message="Upgrading source files..."
 
-# Download, check integrity, uncompress and patch the source from app.src
-ynh_setup_source --dest_dir="$final_path"
+	# Download, check integrity, uncompress and patch the source from app.src
+	ynh_secure_remove --file="$final_path"
+	ynh_setup_source --dest_dir="$final_path"
+	ynh_setup_source --dest_dir="$final_path/games/minetest_game" --source_id=minetest_game
+fi
 
 #=================================================
 # UPGRADE DEPENDENCIES
@@ -96,46 +118,32 @@ ynh_install_app_dependencies $pkg_dependencies
 ynh_print_info --message="Making sure dedicated system user exists..."
 
 # Create a dedicated user (if not existing)
-ynh_system_user_create --username=$app --home_dir=/home/yunohost.app/$app --use_shell
-
-#=================================================
-# SETUP SYSTEMD
-#=================================================
-ynh_print_info --message="Upgrading systemd configuration..."
-
-# Create a dedicated systemd config
-ynh_add_systemd_config
-
-#=================================================
-# COPY CONFIG FILE
-#=================================================
-
-if [ -e /home/yunohost.app/$app ]
-then
-echo "Nothing to do..."
-else
-mkdir -p /home/yunohost.app/$app/.minetest/
-mkdir /home/yunohost.app/$app/.minetest/worlds/
-fi
+ynh_system_user_create --username=$app --home_dir=$home_path --use_shell
 
 #=================================================
 # SPECIFIC UPGRADE
 #=================================================
-# Compile Minetest
-pushd /opt/yunohost/$app
-# Download Minetest Game
-ynh_setup_source --dest_dir=/opt/yunohost/$app/games/minetest_game --source_id=minetest_game
+# COMPILE MINETEST
+#=================================================
 
-cmake . -DRUN_IN_PLACE=TRUE -DENABLE_LUAJIT=TRUE -DBUILD_CLIENT=FALSE -DBUILD_SERVER=TRUE
+ynh_print_info --message="Compiling Minetest..."
 
-make -j$(nproc)
+pushd $final_path
+	cmake . -DRUN_IN_PLACE=TRUE -DENABLE_LUAJIT=TRUE -DBUILD_CLIENT=FALSE -DBUILD_SERVER=TRUE
 
+	make -j$(nproc)
 popd
-
 
 #=================================================
 # MODIFY A CONFIG FILE
 #=================================================
+
+if [ -e $home_path ]
+then
+	ynh_print_info --message="No worlds directory to create"
+else
+	mkdir -p $home_path/.minetest/worlds/
+fi
 
 ynh_backup_if_checksum_is_different --file="$home_path/.minetest/minetest.conf"
 
@@ -163,7 +171,13 @@ ynh_print_info --message="Upgrading logrotate configuration..."
 # Use logrotate to manage app-specific logfile(s)
 ynh_use_logrotate --non-append
 
+#=================================================
+# SETUP SYSTEMD
+#=================================================
+ynh_print_info --message="Upgrading systemd configuration..."
 
+# Create a dedicated systemd config
+ynh_add_systemd_config
 
 #=================================================
 # GENERIC FINALIZATION
@@ -176,11 +190,11 @@ chown -R root: $final_path
 chown -R $app: $home_path
 
 #=================================================
-# RELOAD MINETEST
+# START SYSTEMD SERVICE
 #=================================================
-ynh_print_info --message="Restarting Minetest..."
+ynh_script_progression --message="Starting a systemd service..." --time --weight=1
 
-ynh_systemd_action --action=restart --line_match="Server for gameid=\"$app\" listening on :::30000." --log_path="/var/log/$app/minetest.log"
+ynh_systemd_action --service_name=$app --action="start" --log_path="/var/log/$app/$app.log"
 
 #=================================================
 # END OF SCRIPT

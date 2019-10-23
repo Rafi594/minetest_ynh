@@ -26,15 +26,20 @@ app=$YNH_APP_INSTANCE_NAME
 
 final_path=$(ynh_app_setting_get --app=$app --key=final_path)
 domain=$(ynh_app_setting_get --app=$app --key=domain)
+home_path=$(ynh_app_setting_get --app=$app --key=home_path)
 
 #=================================================
 # STANDARD BACKUP STEPS
 #=================================================
+# STOP SYSTEMD SERVICE
+#=================================================
+ynh_script_progression --message="Stopping a systemd service..." --time --weight=1
+
+ynh_systemd_action --service_name=$app --action="stop" --log_path="/var/log/$app/$app.log"
+
+#=================================================
 # BACKUP THE APP MAIN DIR
 #=================================================
-# Stop Minetest before backup...
-systemctl stop $app
-
 ynh_print_info --message="Backing up the main app directory..."
 
 ynh_backup --src_path="$final_path"
@@ -44,7 +49,7 @@ ynh_backup --src_path="$final_path"
 #=================================================
 ynh_print_info --message="Backing up Minetest data..."
 
-ynh_backup --src_path="/home/yunohost.app/$app"
+ynh_backup --src_path="$home_path"
 
 #=================================================
 # SPECIFIC BACKUP
@@ -63,9 +68,14 @@ ynh_print_info --message="Backing up systemd configuration..."
 ynh_backup --src_path="/etc/systemd/system/$app.service"
 
 #=================================================
+# START SYSTEMD SERVICE
+#=================================================
+ynh_script_progression --message="Starting a systemd service..." --time --weight=1
+
+ynh_systemd_action --service_name=$app --action="start" --log_path="/var/log/$app/$app.log"
+
+#=================================================
 # END OF SCRIPT
 #=================================================
-# Restart Minetest
-systemctl start $app
 
 ynh_print_info --message="Backup script completed for $app. (YunoHost will then actually copy those files to the archive)."

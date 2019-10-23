@@ -21,22 +21,13 @@ ynh_abort_if_errors
 #=================================================
 
 domain=$YNH_APP_ARG_DOMAIN
+path_url="/"
 is_public=$YNH_APP_ARG_IS_PUBLIC
 pvp=$YNH_APP_ARG_PVP
 creative=$YNH_APP_ARG_CREATIVE
 damage=$YNH_APP_ARG_DAMAGE
 servername=$YNH_APP_ARG_SERVERNAME
 
-### If it's a multi-instance app, meaning it can be installed several times independently
-### The id of the app as stated in the manifest is available as $YNH_APP_ID
-### The instance number is available as $YNH_APP_INSTANCE_NUMBER (equals "1", "2", ...)
-### The app instance name is available as $YNH_APP_INSTANCE_NAME
-###    - the first time the app is installed, YNH_APP_INSTANCE_NAME = ynhexample
-###    - the second time the app is installed, YNH_APP_INSTANCE_NAME = ynhexample__2
-###    - ynhexample__{N} for the subsequent installations, with N=3,4, ...
-### The app instance name is probably what interests you most, since this is
-### guaranteed to be unique. This is a good unique identifier to define installation path,
-### db names, ...
 app=$YNH_APP_INSTANCE_NAME
 
 #=================================================
@@ -44,13 +35,11 @@ app=$YNH_APP_INSTANCE_NAME
 #=================================================
 ynh_print_info --message="Validating installation parameters..."
 
-### If the app uses nginx as web server (written in HTML/PHP in most cases), the final path should be "/var/www/$app".
-### If the app provides an internal web server (or uses another application server such as uwsgi), the final path should be "/opt/yunohost/$app"
 final_path=/opt/yunohost/$app
 test ! -e "$final_path" || ynh_die "This path already contains a folder"
 
 # Register (book) web path
-ynh_webpath_register --app=$app --domain=$domain --path_url="/"
+ynh_webpath_register --app=$app --domain=$domain --path_url=$path_url
 
 #=================================================
 # STORE SETTINGS FROM MANIFEST
@@ -58,6 +47,7 @@ ynh_webpath_register --app=$app --domain=$domain --path_url="/"
 ynh_print_info --message="Storing installation settings..."
 
 ynh_app_setting_set --app=$app --key=domain --value=$domain
+ynh_app_setting_set --app=$app --key=path --value=$path_url
 ynh_app_setting_set --app=$app --key=is_public --value=$is_public
 ynh_app_setting_set --app=$app --key=pvp --value=$pvp
 ynh_app_setting_set --app=$app --key=creative --value=$creative
@@ -71,11 +61,6 @@ ynh_app_setting_set --app=$app --key=servername --value=$servername
 #=================================================
 ynh_print_info --message="Configuring firewall..."
 
-### Use these lines if you have to open a port for the application
-### `ynh_find_port` will find the first available port starting from the given port.
-### If you're not using these lines:
-###		- Remove the section "CLOSE A PORT" in the remove script
-
 # Find a free port
 port=$(ynh_find_port 30000)
 # Open this port
@@ -87,14 +72,6 @@ ynh_app_setting_set --app=$app --key=port --value=$port
 #=================================================
 ynh_print_info --message="Installing dependencies..."
 
-### `ynh_install_app_dependencies` allows you to add any "apt" dependencies to the package.
-### Those deb packages will be installed as dependencies of this package.
-### If you're not using this helper:
-###		- Remove the section "REMOVE DEPENDENCIES" in the remove script
-###		- Remove the variable "pkg_dependencies" in _common.sh
-###		- As well as the section "REINSTALL DEPENDENCIES" in the restore script
-###		- And the section "UPGRADE DEPENDENCIES" in the upgrade script
-
 ynh_install_app_dependencies $pkg_dependencies
 
 #=================================================
@@ -102,13 +79,11 @@ ynh_install_app_dependencies $pkg_dependencies
 #=================================================
 ynh_print_info --message="Setting up source files..."
 
-### `ynh_setup_source` is used to install an app from a zip or tar.gz file,
-### downloaded from an upstream source, like a git repository.
-### `ynh_setup_source` use the file conf/app.src
-
 ynh_app_setting_set --app=$app --key=final_path --value=$final_path
 # Download, check integrity, uncompress and patch the source from app.src
 ynh_setup_source --dest_dir="$final_path"
+
+ynh_setup_source --dest_dir="$final_path/games/minetest_game" --source_id=minetest_game
 
 #=================================================
 # CREATE DEDICATED USER
@@ -116,62 +91,58 @@ ynh_setup_source --dest_dir="$final_path"
 ynh_print_info --message="Configuring system user..."
 
 # Create a system user
-ynh_system_user_create --username=$app --home_dir=/home/yunohost.app/$app --use_shell
 home_path=/home/yunohost.app/$app
+ynh_system_user_create --username=$app --home_dir=$home_path --use_shell
+ynh_app_setting_set --app=$app --key=home_path --value=$home_path
 
 #=================================================
-# COPY CONFIG FILE
+# SPECIFIC SETUP
+#=================================================
+# COMPILE MINETEST
+#=================================================
+ynh_print_info --message="Compiling Minetest..."
+
+pushd $final_path
+	cmake . -DRUN_IN_PLACE=TRUE -DENABLE_LUAJIT=TRUE -DBUILD_CLIENT=FALSE -DBUILD_SERVER=TRUE
+
+	make -j$(nproc)
+popd
+
+#=================================================
+# CREATE LOGS DIR
 #=================================================
 
-if [ -e /home/yunohost.app/$app ]
+# Create logs dir
+if [ -e /var/log/$app ]
 then
-echo "Nothing to do..."
+	ynh_print_info --message="No log directory to create..."
 else
-mkdir -p /home/yunohost.app/$app/.minetest/
-mkdir /home/yunohost.app/$app/.minetest/worlds/
+	mkdir /var/log/$app
 fi
 
-cp -a ../conf/minetest.conf /home/yunohost.app/$app/.minetest/
+# Set permissions on logs
+chown -R $app:$app /var/log/$app
 
 #=================================================
 # SETUP SYSTEMD
 #=================================================
 ynh_print_info --message="Configuring a systemd service..."
 
-### `ynh_systemd_config` is used to configure a systemd script for an app.
-### It can be used for apps that use sysvinit (with adaptation) or systemd.
-### Have a look at the app to be sure this app needs a systemd script.
-### `ynh_systemd_config` will use the file conf/systemd.service
-### If you're not using these lines:
-###		- You can remove those files in conf/.
-###		- Remove the section "BACKUP SYSTEMD" in the backup script
-###		- Remove also the section "STOP AND REMOVE SERVICE" in the remove script
-###		- As well as the section "RESTORE SYSTEMD" in the restore script
-###		- And the section "SETUP SYSTEMD" in the upgrade script
-
 # Create a dedicated systemd config
 ynh_add_systemd_config
-
-#=================================================
-# SPECIFIC SETUP
-#=================================================
-# Compile Minetest
-pushd /opt/yunohost/$app
-# Download Minetest Game
-ynh_setup_source --dest_dir=/opt/yunohost/$app/games/minetest_game --source_id=minetest_game
-
-cmake . -DRUN_IN_PLACE=TRUE -DENABLE_LUAJIT=TRUE -DBUILD_CLIENT=FALSE -DBUILD_SERVER=TRUE
-
-make -j$(nproc)
-
-popd
 
 #=================================================
 # MODIFY A CONFIG FILE
 #=================================================
 
-### `ynh_replace_string` is used to replace a string in a file.
-### (It's compatible with sed regular expressions syntax)
+if [ -e $home_path ]
+then
+	ynh_print_info --message="No worlds directory to create"
+else
+	mkdir -p $home_path/.minetest/worlds/
+fi
+
+cp -a ../conf/minetest.conf $home_path/.minetest/
 
 ynh_replace_string --match_string="__APP__" --replace_string="$app" --target_file="$home_path/.minetest/minetest.conf"
 ynh_replace_string --match_string="__PORT__" --replace_string="$port" --target_file="$home_path/.minetest/minetest.conf"
@@ -182,31 +153,9 @@ ynh_replace_string --match_string="__PVP__" --replace_string="$pvp" --target_fil
 ynh_replace_string --match_string="__CREATIVE__" --replace_string="$creative" --target_file="$home_path/.minetest/minetest.conf"
 ynh_replace_string --match_string="__DAMAGE__" --replace_string="$damage" --target_file="$home_path/.minetest/minetest.conf"
 
-
-#=================================================
-# CREATE WORLD
-#=================================================
-
-# Create logs dir
-if [ -e /var/log/$app ]
-then
-echo "Nothing to do..."
-else
-mkdir /var/log/$app
-fi
-
-# Set permissions on logs
-chown -R $app:$app /var/log/$app
-
-systemctl start $app
-
 #=================================================
 # STORE THE CONFIG FILE CHECKSUM
 #=================================================
-
-### `ynh_store_file_checksum` is used to store the checksum of a file.
-### That way, during the upgrade script, by using `ynh_backup_if_checksum_is_different`,
-### you can make a backup of this file before modifying it again if the admin had modified it.
 
 # Calculate and store the config file checksum into the app settings
 ynh_store_file_checksum --file="$home_path/.minetest/minetest.conf"
@@ -217,10 +166,6 @@ ynh_store_file_checksum --file="$home_path/.minetest/minetest.conf"
 # SECURE FILES AND DIRECTORIES
 #=================================================
 
-### For security reason, any app should set the permissions to root: before anything else.
-### Then, if write authorization is needed, any access should be given only to directories
-### that really need such authorization.
-
 # Set permissions to app files
 chown -R root: $final_path
 chown -R $app: $home_path
@@ -230,28 +175,12 @@ chown -R $app: $home_path
 #=================================================
 ynh_print_info --message="Configuring log rotation..."
 
-### `ynh_use_logrotate` is used to configure a logrotate configuration for the logs of this app.
-### Use this helper only if there is effectively a log file for this app.
-### If you're not using this helper:
-###		- Remove the section "BACKUP LOGROTATE" in the backup script
-###		- Remove also the section "REMOVE LOGROTATE CONFIGURATION" in the remove script
-###		- As well as the section "RESTORE THE LOGROTATE CONFIGURATION" in the restore script
-###		- And the section "SETUP LOGROTATE" in the upgrade script
-
 # Use logrotate to manage application logfile(s)
 ynh_use_logrotate
 
 #=================================================
 # ADVERTISE SERVICE IN ADMIN PANEL
 #=================================================
-
-### `yunohost service add` is a CLI yunohost command to add a service in the admin panel.
-### You'll find the service in the 'services' section of YunoHost admin panel.
-### This CLI command would be useless if the app does not have any services (systemd or sysvinit)
-### If you're not using these lines:
-###		- You can remove these files in conf/.
-###		- Remove the section "REMOVE SERVICE FROM ADMIN PANEL" in the remove script
-###		- As well as the section "ADVERTISE SERVICE IN ADMIN PANEL" in the restore script
 
 yunohost service add $app --log "/var/log/$app/$app.log"
 # if using yunohost version 3.2 or more in the 'manifest.json', a description can be added
@@ -262,7 +191,7 @@ yunohost service add $app --log "/var/log/$app/$app.log"
 #=================================================
 ynh_print_info --message="Reloading minetest..."
 
-ynh_systemd_action --action=restart --line_match="Server for gameid=\"$app\" listening on :::30000." --log_path="/var/log/$app/minetest.log"
+ynh_systemd_action --action=start --line_match="Server for gameid=\"$app\" listening on :::30000." --log_path="/var/log/$app/minetest.log"
 
 #=================================================
 # END OF SCRIPT

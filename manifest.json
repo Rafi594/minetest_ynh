@@ -11,8 +11,7 @@
     "license": "MIT",
     "maintainer": {
         "name": "rafi59",
-        "email": "rafi59_dev@srvmaison.fr.nf",
-        "url": ""
+        "email": "rafi59_dev@srvmaison.fr.nf"
     },
     "previous_maintainers": {
     	"name": "Luc Didry",
@@ -35,7 +34,7 @@
                     "en": "Choose a domain for your minetest server",
                     "fr": "Choisissez un domaine pour votre serveur minetest"
                 },
-                "example": "domain.org"
+                "example": "example.com"
             },
             {
                 "name": "is_public",
