@@ -40,7 +40,6 @@ ynh_print_info --message="Checking version..."
 version=ynh_app_upstream_version
 
 if [ "$version" = "0.01" ]; then
-then
 ynh_die --message="You can't upgrade to this version with simple upgrade. Please read the readme for upgrading https://github.com/YunoHost-Apps/minetest_ynh#additional-information ..."
 fi
 
