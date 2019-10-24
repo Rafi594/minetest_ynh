@@ -14,8 +14,10 @@ source /usr/share/yunohost/helpers
 #=================================================
 
 old_domain=$YNH_APP_OLD_DOMAIN
+old_path=$YNH_APP_OLD_PATH
 
 new_domain=$YNH_APP_NEW_DOMAIN
+new_path="/"
 
 app=$YNH_APP_INSTANCE_NAME
 
@@ -26,9 +28,11 @@ ynh_print_info --message="Loading installation settings..."
 
 # Needed for helper "ynh_add_nginx_config"
 final_path=$(ynh_app_setting_get --app=$app --key=final_path)
+home_path=$(ynh_app_setting_get --app=$app --key=home_path)
 
 # Add settings here as needed by your application
 #db_name=$(ynh_app_setting_get --app=$app --key=db_name)
+#db_user=$db_name
 #db_pwd=$(ynh_app_setting_get --app=$app --key=db_pwd)
 
 #=================================================
@@ -42,25 +46,37 @@ then
 fi
 
 change_path=0
+if [ "$old_path" != "$new_path" ]
+then
+	change_path=1
+fi
 
 #=================================================
 # STANDARD MODIFICATIONS
 #=================================================
+# STOP SYSTEMD SERVICE
+#=================================================
+ynh_print_info --message="Stopping a systemd service..."
+
+ynh_systemd_action --service_name=$app --action="stop" --log_path="/var/log/$app/$app.log"
+
 #=================================================
 # SPECIFIC MODIFICATIONS
 #=================================================
-ynh_print_info --message="Stop Minetest..."
-systemctl stop $app
-ynh_replace_string --match_string="$old_domain" --replace_string="$new_domain" --target_file="/home/yunohost.app/$app/.minetest/minetest.conf"
+# MODIFY CONFIGURATION
+#=================================================
+ynh_print_info --message="Modifying configuration..."
+
+ynh_replace_string --match_string="$old_domain" --replace_string="$new_domain" --target_file="$home_path/.minetest/minetest.conf"
 
 #=================================================
 # GENERIC FINALISATION
 #=================================================
-# RELOAD MINETEST
+# START SYSTEMD SERVICE
 #=================================================
-ynh_print_info --message="Reloading Minetest..."
+ynh_print_info --message="Starting a systemd service..."
 
-systemctl restart $app
+ynh_systemd_action --service_name=$app --action="start" --log_path="/var/log/$app/$app.log"
 
 #=================================================
 # END OF SCRIPT
