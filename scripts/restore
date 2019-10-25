@@ -71,7 +71,7 @@ ynh_system_user_create --username=$app --home_dir=$home_path --use_shell
 
 # Restore permissions on app files
 chown -R root: $final_path
-chown -R $app: /home/yunohost.app/$app
+chown -R $app: $home_path
 
 #=================================================
 # SPECIFIC RESTORATION
